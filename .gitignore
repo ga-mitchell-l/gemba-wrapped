@@ -22,7 +22,12 @@ profile.cov
 
 # env file
 .env
+config.json
 
 # Editor/IDE
 # .idea/
- .vscode/
+.vscode/
+launch.json
+
+.spotify_cache
+.venv
