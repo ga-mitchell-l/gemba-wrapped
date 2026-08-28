@@ -259,8 +259,15 @@ def main():
     oldest = parse_date_to_ts(config["start_date"])
     latest = parse_date_to_ts(config["end_date"], end_of_day=True)
 
-    print(f"Scanning #{config['slack_channel_id']} from {config['start_date']} to {config['end_date']}...")
-    found_ids = fetch_slack_track_ids(slack_client, config["slack_channel_id"], oldest, latest)
+    channel_id = config["slack_channel_id"]
+    try:
+        channel_info = slack_client.conversations_info(channel=channel_id)
+        channel_name = "#" + channel_info["channel"].get("name", channel_id)
+    except SlackApiError:
+        channel_name = channel_id  # fall back to the raw ID if lookup fails
+
+    print(f"Scanning {channel_name} from {config['start_date']} to {config['end_date']}...")
+    found_ids = fetch_slack_track_ids(slack_client, channel_id, oldest, latest)
     print(f"Found {len(found_ids)} unique Spotify track link(s) in Slack messages.")
 
     if not found_ids:
@@ -277,6 +284,10 @@ def main():
     sp = spotipy.Spotify(auth_manager=sp_oauth)
 
     playlist_id = config["spotify_playlist_id"]
+    try:
+        playlist_name = sp.playlist(playlist_id, fields="name")["name"]
+    except Exception:
+        playlist_name = playlist_id  # fall back to the raw ID if lookup fails
 
     # Resolve found Slack track IDs -> ISRC (or fall back to ID)
     isrc_by_found_id, unavailable_ids = resolve_isrcs(sp, found_ids)
@@ -284,7 +295,7 @@ def main():
         print(f"{len(unavailable_ids)} track(s) no longer available on Spotify — skipping.")
 
     existing_isrcs = fetch_playlist_isrcs(sp, playlist_id)
-    print(f"Playlist currently has {len(existing_isrcs)} track(s).")
+    print(f'"{playlist_name}" currently has {len(existing_isrcs)} track(s).')
 
     new_ids = []
     seen_this_run = set()
@@ -305,7 +316,7 @@ def main():
         return
 
     if args.dry_run:
-        print("\n--dry-run set, not modifying the playlist. Would add:")
+        print(f'\n--dry-run set, not modifying "{playlist_name}". Would add:')
         for tid in new_ids:
             print(f"  https://open.spotify.com/track/{tid}")
         return
@@ -313,7 +324,7 @@ def main():
     for batch in chunked(new_ids, 100):  # Spotify caps adds at 100 per call
         sp.playlist_add_items(playlist_id, [f"spotify:track:{tid}" for tid in batch])
 
-    print(f"Added {len(new_ids)} track(s) to the playlist.")
+    print(f'Added {len(new_ids)} track(s) from {channel_name} to "{playlist_name}".')
 
 
 if __name__ == "__main__":
