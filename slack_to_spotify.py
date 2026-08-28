@@ -58,12 +58,68 @@ def parse_date_to_ts(date_str: str, end_of_day: bool = False) -> float:
     return dt.timestamp()
 
 
+def _extract_track_ids(msg, track_ids, seen):
+    """Scan a single message's text/attachments for Spotify track links and
+    append any new ones to track_ids (order-preserved, deduped via seen)."""
+    text = msg.get("text", "")
+    attachment_texts = " ".join(
+        a.get("title", "") + " " + a.get("from_url", "")
+        for a in msg.get("attachments", [])
+    )
+    full_text = text + " " + attachment_texts
+
+    for pattern in (TRACK_URL_RE, TRACK_URI_RE):
+        for match in pattern.finditer(full_text):
+            tid = match.group(1)
+            if tid not in seen:
+                seen.add(tid)
+                track_ids.append(tid)
+
+
+def fetch_thread_replies(client, channel_id, thread_ts, oldest, latest, track_ids, seen):
+    """Fetch every reply in a thread and scan each for track links. The
+    parent message (first item returned) is skipped since it was already
+    scanned as part of the main channel history."""
+    cursor = None
+    while True:
+        try:
+            resp = client.conversations_replies(
+                channel=channel_id,
+                ts=thread_ts,
+                limit=200,
+                cursor=cursor,
+            )
+        except SlackApiError as e:
+            print(f"  Warning: could not fetch replies for thread {thread_ts}: {e.response['error']}")
+            return
+
+        for reply in resp.get("messages", []):
+            if reply.get("ts") == thread_ts:
+                continue  # parent message, already scanned in the main pass
+            reply_ts = float(reply.get("ts", 0))
+            if not (oldest <= reply_ts <= latest):
+                continue
+            _extract_track_ids(reply, track_ids, seen)
+
+        cursor = resp.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+
+
 def fetch_slack_track_ids(client, channel_id, oldest, latest):
     """Return a de-duplicated, order-preserved list of Spotify track IDs
-    found in the channel's messages between oldest and latest (inclusive)."""
+    found in the channel's messages (including thread replies) between
+    oldest and latest (inclusive).
+
+    Note: thread membership is determined by the PARENT message's
+    timestamp. A reply posted inside the date range whose parent message
+    was posted before `oldest` will still be missed, since conversations
+    history won't return that parent at all. This covers the common case
+    of threads that started within the scan window."""
     track_ids = []
     seen = set()
     cursor = None
+    thread_parents = []  # (thread_ts, reply_count) pairs to fetch replies for
 
     while True:
         try:
@@ -79,27 +135,18 @@ def fetch_slack_track_ids(client, channel_id, oldest, latest):
             sys.exit(f"Slack API error: {e.response['error']}")
 
         for msg in resp.get("messages", []):
-            text = msg.get("text", "")
-            attachment_texts = " ".join(
-                a.get("title", "") + " " + a.get("from_url", "")
-                for a in msg.get("attachments", [])
-            )
-            full_text = text + " " + attachment_texts
-
-            for match in TRACK_URL_RE.finditer(full_text):
-                tid = match.group(1)
-                if tid not in seen:
-                    seen.add(tid)
-                    track_ids.append(tid)
-            for match in TRACK_URI_RE.finditer(full_text):
-                tid = match.group(1)
-                if tid not in seen:
-                    seen.add(tid)
-                    track_ids.append(tid)
+            _extract_track_ids(msg, track_ids, seen)
+            if msg.get("reply_count", 0) > 0 and msg.get("thread_ts"):
+                thread_parents.append(msg["thread_ts"])
 
         cursor = resp.get("response_metadata", {}).get("next_cursor")
         if not cursor:
             break
+
+    if thread_parents:
+        print(f"Checking {len(thread_parents)} thread(s) for replies...")
+        for thread_ts in thread_parents:
+            fetch_thread_replies(client, channel_id, thread_ts, oldest, latest, track_ids, seen)
 
     return track_ids
 
