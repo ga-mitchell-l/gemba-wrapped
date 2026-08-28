@@ -156,22 +156,44 @@ def chunked(seq, size):
         yield seq[i:i + size]
 
 
-def resolve_isrcs(sp, track_ids: list[str]) -> dict[str, str]:
-    """Given raw Spotify track IDs, return {track_id: isrc}. Falls back to
-    using the track_id itself as the key if no ISRC is available (rare,
-    e.g. local files).
+def resolve_isrcs(sp, track_ids: list[str]) -> tuple[dict[str, str], set[str]]:
+    """Given raw Spotify track IDs, return ({track_id: isrc}, unavailable_ids).
+
+    Falls back to using the track_id itself as the ISRC key if no ISRC is
+    available (rare, e.g. local files). track_ids that no longer resolve
+    (e.g. removed from Spotify) OR that resolve but aren't playable in the
+    authenticated user's market (e.g. licensing restrictions — the catalog
+    page can still exist and look "normal" even though it's greyed out in
+    the app) are returned in unavailable_ids so callers can exclude them.
 
     NOTE: as of the February 2026 API changes, the batch GET /tracks
     endpoint was removed for Development Mode apps — tracks must be
-    fetched one at a time via GET /tracks/{id} (spotipy's sp.track())."""
+    fetched one at a time via GET /tracks/{id} (spotipy's sp.track()).
+
+    We pass market="from_token" so Spotify applies track relinking and
+    includes an is_playable flag (and a restrictions.reason when false) —
+    without a market param, is_playable isn't returned at all and a
+    market-restricted track looks identical to a normal one."""
     isrc_by_id = {}
+    unavailable = set()
     for tid in track_ids:
         try:
-            t = sp.track(tid)
+            t = sp.track(tid, market="from_token")
         except spotipy.exceptions.SpotifyException as e:
-            print(f"  Warning: could not fetch track {tid}: {e}")
+            if e.http_status == 404:
+                print(f"  Skipping {tid} — no longer available on Spotify")
+            else:
+                print(f"  Warning: could not fetch track {tid}: {e}")
+            unavailable.add(tid)
             continue
         if not t:
+            print(f"  Skipping {tid} — no longer available on Spotify")
+            unavailable.add(tid)
+            continue
+        if t.get("is_playable") is False:
+            reason = t.get("restrictions", {}).get("reason", "unknown")
+            print(f"  Skipping {tid} — not playable in your market (reason: {reason})")
+            unavailable.add(tid)
             continue
         isrc = t.get("external_ids", {}).get("isrc")
         # Key by the ORIGINAL requested tid, not t["id"] — Spotify can
@@ -179,7 +201,7 @@ def resolve_isrcs(sp, track_ids: list[str]) -> dict[str, str]:
         # this dict up by the tid it found in Slack, not by whatever id
         # comes back from the API.
         isrc_by_id[tid] = isrc or tid
-    return isrc_by_id
+    return isrc_by_id, unavailable
 
 
 def fetch_playlist_isrcs(sp, playlist_id) -> set[str]:
@@ -257,7 +279,9 @@ def main():
     playlist_id = config["spotify_playlist_id"]
 
     # Resolve found Slack track IDs -> ISRC (or fall back to ID)
-    isrc_by_found_id = resolve_isrcs(sp, found_ids)
+    isrc_by_found_id, unavailable_ids = resolve_isrcs(sp, found_ids)
+    if unavailable_ids:
+        print(f"{len(unavailable_ids)} track(s) no longer available on Spotify — skipping.")
 
     existing_isrcs = fetch_playlist_isrcs(sp, playlist_id)
     print(f"Playlist currently has {len(existing_isrcs)} track(s).")
@@ -265,13 +289,15 @@ def main():
     new_ids = []
     seen_this_run = set()
     for tid in found_ids:
+        if tid in unavailable_ids:
+            continue
         key = isrc_by_found_id.get(tid, tid)
         if key in existing_isrcs or key in seen_this_run:
             continue
         seen_this_run.add(key)
         new_ids.append(tid)
 
-    skipped = len(found_ids) - len(new_ids)
+    skipped = len(found_ids) - len(new_ids) - len(unavailable_ids)
     print(f"{len(new_ids)} new track(s) to add ({skipped} already in playlist or duplicate).")
 
     if not new_ids:
