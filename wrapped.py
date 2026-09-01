@@ -4,7 +4,7 @@ wrapped.py
 
 A Spotify-Wrapped-style summary of a Slack channel's music-sharing
 activity over the date range in config.json: top posters, the
-most-reacted-to song, most-posted songs/artists, and a genre breakdown.
+most-reacted-to song, and most-posted songs/artists.
 
 Read-only — this never modifies the Spotify playlist. For syncing
 tracks into the playlist, see slack_to_spotify.py.
@@ -32,17 +32,15 @@ from gemba_common import (
     fetch_slack_track_mentions,
     resolve_track_info,
     get_user_display_name,
-    get_artist_genres,
 )
 
 
-def print_wrapped_summary(sp, slack_client, mentions, info_by_id, channel_name):
+def print_wrapped_summary(slack_client, mentions, info_by_id, channel_name):
     if not mentions:
         print("No tracks posted in this date range — nothing to wrap up.")
         return
 
     user_name_cache = {}
-    artist_genre_cache = {}
 
     print(f"\n{'=' * 40}")
     print(f"  {channel_name} Wrapped")
@@ -93,23 +91,6 @@ def print_wrapped_summary(sp, slack_client, mentions, info_by_id, channel_name):
         for i, (artist_name, count) in enumerate(artist_mention_counts.most_common(5), 1):
             print(f"  {i}. {artist_name} — {count} post(s)")
 
-    # Genre breakdown, via each posted track's primary artist.
-    genre_counts = Counter()
-    for m in mentions:
-        info = info_by_id.get(m["track_id"])
-        if not info or not info.get("artist_id"):
-            continue
-        for genre in get_artist_genres(sp, info["artist_id"], artist_genre_cache):
-            genre_counts[genre] += 1
-    if genre_counts:
-        total = sum(genre_counts.values())
-        print("\nGenre breakdown:")
-        for genre, count in genre_counts.most_common(8):
-            pct = 100 * count / total
-            print(f"  {genre}: {pct:.0f}%")
-    else:
-        print("\nGenre breakdown: no genre data available for these artists.")
-
     print()
 
 
@@ -143,7 +124,7 @@ def main():
     if unavailable_ids:
         print(f"{len(unavailable_ids)} track(s) no longer available on Spotify — excluded from stats.")
 
-    print_wrapped_summary(sp, slack_client, mentions, info_by_found_id, channel_name)
+    print_wrapped_summary(slack_client, mentions, info_by_found_id, channel_name)
 
 
 if __name__ == "__main__":

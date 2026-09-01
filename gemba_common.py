@@ -311,28 +311,6 @@ def get_user_display_name(client, user_id, cache) -> str:
     return name
 
 
-def get_artist_genres(sp, artist_id, cache) -> list[str]:
-    """Genres live on the Artist object, not on tracks or the (now
-    largely dead) audio-features endpoint — Audio Features/Audio Analysis
-    were restricted to legacy apps back in Nov 2024 and never got a
-    replacement, so a genre breakdown has to go via each track's primary
-    artist instead. GET /artists/{id} (single) is still available post-
-    Feb-2026; only the batch GET /artists was removed, so we fetch one at
-    a time and cache by artist_id to cut down on calls since many tracks
-    share an artist."""
-    if not artist_id:
-        return []
-    if artist_id in cache:
-        return cache[artist_id]
-    try:
-        artist = sp.artist(artist_id)
-        genres = artist.get("genres", []) or []
-    except Exception:
-        genres = []
-    cache[artist_id] = genres
-    return genres
-
-
 def chunked(seq, size):
     for i in range(0, len(seq), size):
         yield seq[i:i + size]

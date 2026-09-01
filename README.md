@@ -14,7 +14,7 @@ any new ones to a Spotify playlist.
   same recording depending on request context.
 - `wrapped.py` — a Spotify-Wrapped-style summary of the channel's posting
   activity over the same date range: top posters, the most-reacted-to song,
-  most-posted songs/artists, and a genre breakdown. Read-only — it never
+  and most-posted songs/artists. Read-only — it never
   modifies the playlist.
 - `check_setup.py` — verifies your `.env` and `config.json` are set up
   correctly, and checks live Slack/Spotify connectivity, **before** you run
@@ -145,14 +145,7 @@ Most-posted songs:
 
 Top artists:
   1. Dua Lipa — 4 post(s)
-
-Genre breakdown:
-  dance pop: 22%
-  pop: 18%
 ```
-
-Genre coverage depends on how well Spotify has tagged each artist, so it
-won't be complete for every channel.
 
 ## Security note
 
@@ -178,9 +171,3 @@ compromised and regenerate your Spotify app credentials.
   fields and endpoints in ways that silently broke both the ISRC-based dedup
   and playlist-read logic in earlier versions of this script.
 - **`NotOpenSSLWarning`** — see the note under Setup step 1.
-- **`wrapped.py`'s genre breakdown looks sparse or empty** — genres come
-  from each track's primary artist (`GET /artists/{id}`), not from Spotify's
-  audio-features endpoint (danceability, energy, etc.) — that endpoint was
-  restricted to legacy apps back in November 2024 and has no official
-  replacement, so a new app can't use it. Not every artist has genre tags,
-  so coverage varies by channel.
