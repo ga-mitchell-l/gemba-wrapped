@@ -30,4 +30,7 @@ config.json
 launch.json
 
 .spotify_cache
+
+# python
+__pycache__/
 .venv

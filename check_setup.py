@@ -3,7 +3,9 @@
 check_setup.py
 
 Verifies that your .env and config.json are correctly set up for
-slack_to_spotify.py, BEFORE you run the real sync. Checks:
+slack_to_spotify.py and wrapped.py, BEFORE you run either. Both scripts
+share the same .env/config.json, so this only needs to be run once.
+Checks:
 
   1. .env file exists and has the required keys
   2. config.json exists and has the required keys
@@ -204,6 +206,19 @@ def check_slack(config):
     except SlackApiError as e:
         fail(f"Cannot read history: {e.response['error']}")
         problems.append("history read failed")
+
+    # 4. Can it look up user profiles? Only needed for wrapped.py, which
+    # resolves poster IDs to display names — not required for
+    # slack_to_spotify.py's sync, so this is a warning, not a failure.
+    try:
+        client.users_info(user=auth.get("user_id"))
+        ok("Can look up user profiles (needed for wrapped.py's poster names)")
+    except SlackApiError as e:
+        if e.response["error"] == "missing_scope":
+            warn("Token is missing the users:read scope — wrapped.py will still run, "
+                 "but will show raw Slack user IDs instead of names")
+        else:
+            warn(f"Could not verify user-lookup permission: {e.response['error']}")
 
     return problems
 
