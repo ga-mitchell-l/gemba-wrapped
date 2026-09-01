@@ -5,13 +5,23 @@ any new ones to a Spotify playlist.
 
 ## How it works
 
+- `gemba_common.py` — shared logic used by both scripts below: config
+  loading, Slack scanning (including thread replies), and Spotify track
+  resolution. Not run directly.
 - `slack_to_spotify.py` — reads Slack messages, extracts Spotify track links,
   and adds any not already in the playlist. Dedup is done by ISRC (not raw
   Spotify track ID), since Spotify can return a different regional ID for the
   same recording depending on request context.
+- `wrapped.py` — a Spotify-Wrapped-style summary of the channel's posting
+  activity over the same date range: top posters, the most-reacted-to song,
+  most-posted songs/artists, and a genre breakdown. Read-only — it never
+  modifies the playlist.
 - `check_setup.py` — verifies your `.env` and `config.json` are set up
   correctly, and checks live Slack/Spotify connectivity, **before** you run
-  the real sync. Run this first if anything's not working.
+  either script above. Run this first if anything's not working.
+
+All four files need to stay in the same folder, since `slack_to_spotify.py`
+and `wrapped.py` both import from `gemba_common.py`.
 
 ## Requirements
 
@@ -56,8 +66,11 @@ pip install -r requirements.txt
 2. Grant it the `channels:history` (or `groups:history` for private channels)
    and `channels:read` scopes, and invite the bot to the target channel with
    `/invite @yourbotname`.
-3. Copy the bot token (starts with `xoxb-`) into your `.env`.
-4. Find the channel ID via the channel details panel in Slack
+3. **Optional, for `wrapped.py` only:** also grant `users:read` so it can
+   show posters' real names. Without it, `wrapped.py` still works but shows
+   raw Slack user IDs instead of names in the "Top posters" list.
+4. Copy the bot token (starts with `xoxb-`) into your `.env`.
+5. Find the channel ID via the channel details panel in Slack
    (right-click channel → View channel details → copy Channel ID).
 
 ### 4. Configure the project
@@ -96,19 +109,50 @@ python check_setup.py
 
 This checks your `.env` and `config.json` for missing/malformed values, and
 if those look OK, tests that the Slack token can see the channel and the
-Spotify credentials can access the playlist. Fix anything it flags before
-moving on.
+Spotify credentials can access the playlist. It also checks (as a warning,
+not a blocker) whether the token has the `users:read` scope `wrapped.py`
+needs for poster names. Fix anything it flags before moving on.
 
 ## Running
 
 ```bash
 python slack_to_spotify.py            # scan and add new tracks
 python slack_to_spotify.py --dry-run  # preview without modifying the playlist
+python wrapped.py                     # show a Wrapped-style summary (read-only)
 ```
 
-The first run will open a browser window for Spotify OAuth; the resulting
-token is cached to `.spotify_cache` (or `SPOTIFY_CACHE_PATH`) so you won't be
-prompted again until it expires.
+The first run of `slack_to_spotify.py` will open a browser window for
+Spotify OAuth; the resulting token is cached to `.spotify_cache` (or
+`SPOTIFY_CACHE_PATH`) so you won't be prompted again until it expires.
+`wrapped.py` reuses that same cached token.
+
+### Sample `wrapped.py` output
+
+```
+========================================
+  #music-shares Wrapped
+========================================
+
+Top posters:
+  1. Betty — 8 song(s) posted
+  2. Sam — 5 song(s) posted
+
+Most-reacted song: Levitating — Dua Lipa
+  12 reaction(s) · https://open.spotify.com/track/...
+
+Most-posted songs:
+  1. Blinding Lights — The Weeknd — posted 3 times
+
+Top artists:
+  1. Dua Lipa — 4 post(s)
+
+Genre breakdown:
+  dance pop: 22%
+  pop: 18%
+```
+
+Genre coverage depends on how well Spotify has tagged each artist, so it
+won't be complete for every channel.
 
 ## Security note
 
@@ -134,3 +178,9 @@ compromised and regenerate your Spotify app credentials.
   fields and endpoints in ways that silently broke both the ISRC-based dedup
   and playlist-read logic in earlier versions of this script.
 - **`NotOpenSSLWarning`** — see the note under Setup step 1.
+- **`wrapped.py`'s genre breakdown looks sparse or empty** — genres come
+  from each track's primary artist (`GET /artists/{id}`), not from Spotify's
+  audio-features endpoint (danceability, energy, etc.) — that endpoint was
+  restricted to legacy apps back in November 2024 and has no official
+  replacement, so a new app can't use it. Not every artist has genre tags,
+  so coverage varies by channel.
